@@ -2279,7 +2279,24 @@ add_frpc_systemd_service_if_need() {
 }
 
 get_gostc_url() {
-    wget "$confhome/get-gostc-url.sh" -O- | sh -s
+    # 直接内联生成，避免 live 环境 busybox wget 访问 https 失败
+    # 与 get-gostc-url.sh 的架构映射保持一致
+    case "$(uname -m)" in
+    x86_64) suffix=amd64_v1 ;; # v1 兼容所有 amd64
+    aarch64) suffix=arm64_v8.0 ;;
+    armv7l) suffix=arm_7 ;;
+    armv6l) suffix=arm_6 ;;
+    armv5tel | armv5l | armv4l) suffix=arm_5 ;;
+    i686 | i386) suffix=386_sse2 ;;
+    riscv64) suffix=riscv64_rva20u64 ;;
+    s390x) suffix=s390x ;;
+    mips64el) suffix=mips64le_hardfloat ;;
+    mips64) suffix=mips64_hardfloat ;;
+    mipsel) suffix=mipsle_hardfloat ;;
+    mips) suffix=mips_hardfloat ;;
+    *) return 1 ;;
+    esac
+    echo "https://alist.sian.one/direct/gostc/gostc-open/gostc_linux_${suffix}.tar.gz"
 }
 
 # gostc 客户端连接参数（写死，按需修改）
