@@ -8,8 +8,9 @@
 set -eE
 confhome=https://raw.githubusercontent.com/dxiaom/reinstall/main
 # confhome_cn 留空，国内网络使用 github_proxy 代理
+# 注意：github_proxy 必须包含完整替换串（代理地址 + 原 raw 地址）
 confhome_cn=
-github_proxy=https://gh-proxy.com
+github_proxy=https://gh-proxy.com/https://raw.githubusercontent.com
 
 # 用于判断 reinstall.sh 和 trans.sh 是否兼容
 SCRIPT_VERSION=4BACD833-A585-23BA-6CBB-9AA4E08E0005
