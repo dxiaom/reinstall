@@ -2330,14 +2330,24 @@ add_gostc_systemd_service_if_need() {
         return 0
     }
 
-    # 与官方用法一致：gostc install 注册为服务并自动启用
-    # chroot 中无法 systemctl start，但 enable 已生效，重启后会自动启动
-    if ! chroot "$os_dir" /usr/local/bin/gostc install --tls=$GOSTC_TLS -addr $GOSTC_ADDR -key $GOSTC_KEY; then
-        warn "gostc install failed, skip."
-        return 0
-    fi
-    # systemd unit 中包含 key，限制权限
-    chroot "$os_dir" chmod 600 /etc/systemd/system/gostc.service || true
+    # 手动写 systemd unit，不用 gostc install（chroot 里没有 systemd/DBus 运行）
+    cat >"$os_dir/etc/systemd/system/gostc.service" <<EOF
+[Unit]
+Description=GOSTC Client
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/gostc --tls=$GOSTC_TLS -addr $GOSTC_ADDR -key $GOSTC_KEY
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    chmod 600 "$os_dir/etc/systemd/system/gostc.service"
+    chroot "$os_dir" systemctl enable gostc.service || true
 }
 
 # alpine (OpenRC) 目标系统安装 gostc 客户端服务
