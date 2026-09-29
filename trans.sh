@@ -2310,7 +2310,8 @@ install_gostc_binary() {
 
     mkdir -p "$os_dir/usr/local/bin"
     gostc_url=$(get_gostc_url) || return 1
-    download "$gostc_url" "$os_dir/gostc.tar.gz" || return 1
+    # 用子shell下载，避免 download() 内部 error_and_exit 导致整个脚本退出
+    ( download "$gostc_url" "$os_dir/gostc.tar.gz" ) || return 1
     # goreleaser 生成的 tar.gz 中 gostc 位于根目录
     tar xzf "$os_dir/gostc.tar.gz" -C "$os_dir/usr/local/bin" gostc || {
         rm -f "$os_dir/gostc.tar.gz"
@@ -9005,6 +9006,8 @@ if ! pidof gostc >/dev/null; then
             /usr/local/bin/gostc --tls=$GOSTC_TLS -addr $GOSTC_ADDR -key $GOSTC_KEY || true
             sleep 5
         done &
+    else
+        warn 'gostc install failed in live env, skip. Installation will continue.'
     fi
 fi
 
